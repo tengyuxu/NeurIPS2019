@@ -1,0 +1,479 @@
+# package imports
+import numpy as np
+import matplotlib.pyplot as plt
+from numpy.linalg import inv
+
+
+# Define the base functions
+def Phi(n_state, n_fun, l2_norm_constrain):
+    np.random.seed(123)
+    Phi_base = np.random.uniform(0,1,(n_state, n_fun))
+    Phi_base = Phi_base * l2_norm_constrain / np.sqrt(n_fun, dtype=np.float32)
+    return Phi_base
+
+# Define the reward generate function
+def Rewards(n_state, r_max):
+    
+    np.random.seed(234)
+    rewards = r_max * np.random.uniform(0, 1, (1, n_state))
+    return rewards
+
+# Define the behavior policy
+def Behavior_Policy(n_action, n_state, n_main_action):
+    
+    np.random.seed(345)
+    initial_matrix = np.random.uniform(0.3, 0.7, (n_action, n_state))
+    
+    bias_matrix = np.zeros([n_action, n_state])
+    for k in range (0, n_state):
+        np.random.seed(k * 1000 + 345)
+        main_action_index = np.random.choice(n_action, n_main_action, replace = False)
+        for j in range(0, n_main_action):
+            bias_matrix[main_action_index[j], k] = 10 #5
+    
+    initial_matrix = initial_matrix + bias_matrix
+    state_action_policy = np.zeros([n_action, n_state])
+    for i in range(0, n_state):
+        state_action_policy[:,i] = initial_matrix[:,i]/np.sum(initial_matrix[:,i])
+    return state_action_policy
+
+# Define the target policy
+def Target_Policy(n_action, n_state, n_main_action):
+    
+    np.random.seed(456)
+    initial_matrix = np.random.uniform(0.4, 0.6, (n_action, n_state))
+    
+    bias_matrix = np.zeros([n_action, n_state])
+    for k in range (0, n_state):
+        np.random.seed(k * 888 + 456)
+        main_action_index = np.random.choice(n_action, n_main_action, replace = False)
+        for j in range(0, n_main_action):
+            bias_matrix[main_action_index[j], k] = 10 #5
+    
+    initial_matrix = initial_matrix + bias_matrix
+    state_action_policy = np.zeros([n_action, n_state])
+    for i in range(0, n_state):
+        state_action_policy[:,i] = initial_matrix[:,i]/np.sum(initial_matrix[:,i])
+    return state_action_policy
+
+# Define the transition kernel p(a,s,s')
+def Trans_Prob(n_action, n_state, n_state_next):
+    np.random.seed(567)
+    initial_matrix = np.random.uniform(0,1, (n_action, n_state, n_state))
+    trans_prob_matrix = np.zeros([n_action, n_state, n_state])
+    composite_matrix = np.zeros([n_action, n_state, n_state])
+    
+    bias_trans_prob_matrix = np.zeros([n_action, n_state, n_state])
+    for m in range(0, n_state):
+        for n in range(0, n_action):
+            np.random.seed( 23 * m + 97 * n + 4567 )
+            main_state_index = np.random.choice(n_state, n_state_next, replace = False)
+            for l in range(0, n_state_next):
+                bias_trans_prob_matrix[n, m, main_state_index[l]] = 100
+    
+    composite_matrix = initial_matrix + bias_trans_prob_matrix
+    
+    for i in range(0, n_state):
+        for j in range (0, n_action):
+           trans_prob_matrix[j,i,:] = composite_matrix[j,i,:]/np.sum(composite_matrix[j,i,:])
+
+    return trans_prob_matrix
+
+
+# Define the state-state transition matrix
+def Trans_SS_Prob(n_action, n_state, trans_prob_matrix, state_action_policy):
+    trans_ss_prob_matrix = np.zeros([n_state, n_state])
+    
+    for i in range(0, n_state):
+        for j in range(0, n_state):
+            trans_ss_prob_matrix[i, j] = np.dot(state_action_policy[:, i], trans_prob_matrix[:, i, j])
+            
+    return trans_ss_prob_matrix
+
+# Calculate the Stationary Distribution
+def Stationary_Dis(trans_ss_prob_matrix):
+    d = trans_ss_prob_matrix.shape[0]
+    a = np.eye(d) - trans_ss_prob_matrix
+    a = np.vstack((a.T, np.ones(d)))
+    b = np.matrix([0] * d + [1]).T
+    station_distribution = np.linalg.lstsq(a, b)[0]
+    
+    return station_distribution
+
+# Calculate the expected value of matrix B
+def Expectation_B(station_distribution, target_policy, trans_prob_matrix, n_fun, n_state, n_action, Phi_base, gamma):
+    B = np.zeros([n_fun, n_fun])
+    for i in range(0, n_state):
+        for j in range(0, n_action):
+            for k in range(0, n_state):
+                B = B - gamma * station_distribution[i, 0] * target_policy[j, i] * trans_prob_matrix[j, i, k] * np.dot(Phi_base[i, :].reshape([n_fun, 1]), Phi_base[k, :].reshape([1, n_fun]))
+    
+    return B
+
+# Calculate the expected value of matrix B
+def Expectation_C(station_distribution, n_fun, n_state, Phi_base):
+    C = np.zeros([n_fun, n_fun])
+    for i in range(0, n_state):
+        C = C - station_distribution[i, 0] * np.dot(Phi_base[i, :].reshape([n_fun, 1]), Phi_base[i, :].reshape([1, n_fun]))
+        
+    return C
+
+# Calculate the expected value of vector b
+def Expectation_b(station_distribution, n_fun, n_state, Phi_base, rewards):
+    b = np.zeros([n_fun, 1])
+    for i in range(0, n_state):
+        b = b + station_distribution[i, 0] * rewards[0, i] * Phi_base[i, :].reshape([n_fun, 1])
+    
+    return b
+
+
+
+# Define action choose algorithm
+def Action_Choose(State, n_action, policy):
+    action_distribt = policy[:, State]
+    action = np.random.choice(n_action, 1, p = action_distribt)
+    return action
+
+# Define state choose algorithm
+def State_Choose(Action, State, n_state, transition):
+    state_distribt = transition[Action, State, :]
+    state_new = np.random.choice(n_state, 1, p = state_distribt)
+    return state_new
+
+# Generate single trajetory algorithm
+def Trajetory(initial_state, n_action, n_state, n_main_action, n_steps, policy, transition):
+    state_storage = np.zeros((1, n_step + 1), dtype = int)
+    action_storage = np.zeros((1, n_step), dtype = int)
+    
+    state_storage[0,0] = initial_state
+    for i in range(0, n_steps):
+        action_storage[0, i] = Action_Choose(state_storage[0, i], n_action, policy)
+        state_storage[0, i+1] = State_Choose(action_storage[0, i], state_storage[0, i], n_state, transition)
+    
+    return state_storage, action_storage
+
+def Ladder_Stepsize(period, rate, iteration):
+    s_n = np.floor(iteration/period)
+    stepsize = 1/(pow(s_n+1, rate))
+    
+    return stepsize
+
+
+# Projection function
+def Projection(vector, Radius):
+    if np.linalg.norm(vector) > Radius:
+        v = Radius * vector/np.linalg.norm(vector)
+    else:
+        v = vector
+    return v
+
+# Online parameter update algorithm
+#def Update_Dimishing_Stepsize(theta_0, stepsize_alpha, stepsize_beta, Phi_base, rewards, gamma, lambd, R_theta, R_w, behavior_policy, target_policym, state_storage, action_storage):
+
+# alpha = 0.15; a_c = b_c = 0.03; n_step = 1100000 - 1200000
+# alpha = 0.3; a_c = b_c = 0.18; n_step = 1100000 - 1200000
+# alpha = 0.45; a_c = b_c = 1; n_step = 1400000 - 1500000
+# alpha = 0.6; a_c = b_c = 
+
+n_action = 20  #20
+n_state = 500  #500
+n_state_next = 50  #50
+n_maction = 15 #20
+n_step = 500000
+n_fun = 20     #20
+l2_norm_constrain = 1
+
+n_avg = 10
+
+gamma = 0.95
+lambd = 0.0
+
+# stepsize parameter
+a_c_I = 0.06
+b_c_I = a_c_I
+alpha_I = 0.1
+beta_I = alpha_I/1.5
+
+a_c_II = 0.1
+b_c_II = a_c_II
+alpha_II = 0.15
+beta_II = alpha_II/1.5
+
+a_c_III = 0.2
+b_c_III = a_c_III
+alpha_III = 0.2
+beta_III = alpha_III/1.5
+
+a_c_IV = 0.3
+b_c_IV = a_c_IV
+alpha_IV = 0.25
+beta_IV = alpha_IV/1.5
+
+a_c_V = 0.5
+b_c_V = a_c_V
+alpha_V = 0.3
+beta_V = alpha_V/1.5
+
+a_c_VI = 1.0
+b_c_VI = a_c_VI
+alpha_VI = 0.35
+beta_VI = alpha_VI/1.5
+
+a_c_VII = 1.6
+b_c_VII = a_c_VII
+alpha_VII = 0.4
+beta_VII = alpha_VII/1.5
+
+a_c_VIII = 2.2
+b_c_VIII = a_c_VIII
+alpha_VIII = 0.45
+beta_VIII = alpha_VIII/1.5
+
+a_c_IX = 3.0
+b_c_IX = a_c_IX
+alpha_IX = 0.5
+beta_IX = alpha_IX/1.5
+
+a_c_X = 5.5
+b_c_X = a_c_X
+alpha_X = 0.55
+beta_X = alpha_X/1.5
+
+a_c_XI = 6.0
+b_c_XI = a_c_XI
+alpha_XI = 0.6
+beta_XI = alpha_XI/1.5
+
+a_c_XII = 9.0
+b_c_XII = a_c_XII
+alpha_XII = 0.65
+beta_XII = alpha_XII/1.5
+
+# decreasing rate
+
+
+rewards = Rewards(n_state, 1)
+
+# define policy and transition kernel
+behavior_policy = Behavior_Policy(n_action, n_state, n_maction)
+target_policy = Target_Policy(n_action, n_state, n_maction)
+transition_p = Trans_Prob(n_action,n_state,n_state_next)
+
+# Part I: Calculate the ture optimal parameter theta_star
+transition_ss_p = Trans_SS_Prob(n_action, n_state, transition_p, behavior_policy)
+station_d = Stationary_Dis(transition_ss_p)
+
+# generate the markov trajetory, base function
+state_storage = np.zeros([n_avg, 1, n_step+1], dtype = int)
+action_storage = np.zeros([n_avg, 1, n_step], dtype = int)
+
+ini_state_storage = np.zeros([1, n_avg], dtype = int)
+for k in range(0, n_avg):
+    ini_state_storage[0, k] = np.random.choice(n_state, 1, p = np.squeeze(np.asarray(station_d)))[0]
+
+for k in range(0, n_avg):
+    state_storage[k, :, :], action_storage[k, :, :] = Trajetory(ini_state_storage[0, k], n_action, n_state, n_maction, n_step, behavior_policy, transition_p)
+
+phi = Phi(n_state, n_fun, l2_norm_constrain)
+e_t = np.zeros((n_fun, 1))
+
+
+B = Expectation_B(station_d, target_policy, transition_p, n_fun, n_state, n_action, phi, gamma)
+C = Expectation_C(station_d, n_fun, n_state, phi)
+b = Expectation_b(station_d, n_fun, n_state, phi, rewards)
+A = (C - B).T
+theta_star = -1 * np.dot(inv(A),b)
+
+# Part II: Do the stochastic approximation part
+error_store_de_I = np.zeros([1, n_step])
+error_store_de_II = np.zeros([1, n_step])
+error_store_de_III = np.zeros([1, n_step])
+error_store_de_IV = np.zeros([1, n_step])
+error_store_de_V = np.zeros([1, n_step])
+error_store_de_VI = np.zeros([1, n_step])
+error_store_de_VII = np.zeros([1, n_step])
+error_store_de_VIII = np.zeros([1, n_step])
+error_store_de_IX = np.zeros([1, n_step])
+error_store_de_X = np.zeros([1, n_step])
+error_store_de_XI = np.zeros([1, n_step])
+error_store_de_XII = np.zeros([1, n_step])
+
+theta_0 = 0.0 * np.ones([n_fun, 1])
+w_0 = -1.0 * np.dot(inv(C), b + np.dot(A, theta_0))
+
+for k in range (0, n_avg):
+    theta_t_de_I = theta_0
+    w_t_de_I = w_0
+    
+    theta_t_de_II = theta_0
+    w_t_de_II = w_0
+    
+    theta_t_de_III = theta_0
+    w_t_de_III = w_0
+    
+    theta_t_de_IV = theta_0
+    w_t_de_IV = w_0
+    
+    theta_t_de_V = theta_0
+    w_t_de_V = w_0
+    
+    theta_t_de_VI = theta_0
+    w_t_de_VI = w_0
+    
+    theta_t_de_VII = theta_0
+    w_t_de_VII = w_0
+    
+    theta_t_de_VIII = theta_0
+    w_t_de_VIII = w_0
+    
+    theta_t_de_IX = theta_0
+    w_t_de_IX = w_0
+    
+    theta_t_de_X = theta_0
+    w_t_de_X = w_0
+    
+    theta_t_de_XI = theta_0
+    w_t_de_XI = w_0
+    
+    theta_t_de_XII = theta_0
+    w_t_de_XII = w_0
+
+    for i in range (0, n_step):
+        
+        alpha_t_de_I = a_c_I/(pow(i+1, alpha_I))
+        beta_t_de_I = b_c_I/(pow(i+1, beta_I))
+        
+        alpha_t_de_II = a_c_II/(pow(i+1, alpha_II))
+        beta_t_de_II = b_c_II/(pow(i+1, beta_II))
+        
+        alpha_t_de_III = a_c_III/(pow(i+1, alpha_III))
+        beta_t_de_III = b_c_III/(pow(i+1, beta_III))
+        
+        alpha_t_de_IV = a_c_IV/(pow(i+1, alpha_IV))
+        beta_t_de_IV = b_c_IV/(pow(i+1, beta_IV))
+        
+        alpha_t_de_V = a_c_V/(pow(i+1, alpha_V))
+        beta_t_de_V = b_c_V/(pow(i+1, beta_V))
+        
+        alpha_t_de_VI = a_c_VI/(pow(i+1, alpha_VI))
+        beta_t_de_VI = b_c_VI/(pow(i+1, beta_VI))
+        
+        alpha_t_de_VII = a_c_VII/(pow(i+1, alpha_VII))
+        beta_t_de_VII = b_c_VII/(pow(i+1, beta_VII))
+        
+        alpha_t_de_VIII = a_c_VIII/(pow(i+1, alpha_VIII))
+        beta_t_de_VIII = b_c_VIII/(pow(i+1, beta_VIII))
+        
+        alpha_t_de_IX = a_c_IX/(pow(i+1, alpha_IX))
+        beta_t_de_IX = b_c_IX/(pow(i+1, beta_IX))
+        
+        alpha_t_de_X = a_c_X/(pow(i+1, alpha_X))
+        beta_t_de_X = b_c_X/(pow(i+1, beta_X))
+        
+        alpha_t_de_XI = a_c_XI/(pow(i+1, alpha_XI))
+        beta_t_de_XI = b_c_XI/(pow(i+1, beta_XI))
+        
+        alpha_t_de_XII = a_c_XII/(pow(i+1, alpha_XII))
+        beta_t_de_XII = b_c_XII/(pow(i+1, beta_XII))
+        
+        s_t = state_storage[k,0,i]
+        a_t = action_storage[k, 0, i]
+        s_tplus = state_storage[k,0,i+1]
+        
+        ru_t = target_policy[a_t, s_t] / behavior_policy[a_t, s_t]
+        phi_t = np.reshape(phi[s_t, :], (n_fun, 1))
+        phi_tplus = np.reshape(phi[s_tplus, :], (n_fun, 1))
+        r_t = rewards[0, s_t]
+        lambd_t = lambd * min(1,ru_t)/ru_t
+        e_t = ru_t * (phi_t + gamma * lambd_t * e_t)
+        
+        error_store_de_I[0, i] = (float(k)/(float(k)+1)) * error_store_de_I[0, i] + (1/(float(k)+1)) * np.square(np.linalg.norm(theta_t_de_I - theta_star))
+        delta_t_de_I = r_t + gamma * np.dot(phi_tplus.T, theta_t_de_I) - np.dot(phi_t.T, theta_t_de_I)
+        theta_t_de_I = theta_t_de_I + alpha_t_de_I * (delta_t_de_I * e_t - gamma * (1 - lambd_t) * np.dot(e_t.T, w_t_de_I) * phi_tplus)
+        w_t_de_I = w_t_de_I + beta_t_de_I * (delta_t_de_I * e_t - np.dot(phi_t.T, w_t_de_I) * phi_t)
+        
+        error_store_de_II[0, i] = (float(k)/(float(k)+1)) * error_store_de_II[0, i] + (1/(float(k)+1)) * np.square(np.linalg.norm(theta_t_de_II - theta_star))
+        delta_t_de_II = r_t + gamma * np.dot(phi_tplus.T, theta_t_de_II) - np.dot(phi_t.T, theta_t_de_II)
+        theta_t_de_II = theta_t_de_II + alpha_t_de_II * (delta_t_de_II * e_t - gamma * (1 - lambd_t) * np.dot(e_t.T, w_t_de_II) * phi_tplus)
+        w_t_de_II = w_t_de_II + beta_t_de_II * (delta_t_de_II * e_t - np.dot(phi_t.T, w_t_de_II) * phi_t)
+        
+        error_store_de_III[0, i] = (float(k)/(float(k)+1)) * error_store_de_III[0, i] + (1/(float(k)+1)) * np.square(np.linalg.norm(theta_t_de_III - theta_star))
+        delta_t_de_III = r_t + gamma * np.dot(phi_tplus.T, theta_t_de_III) - np.dot(phi_t.T, theta_t_de_III)
+        theta_t_de_III = theta_t_de_III + alpha_t_de_III * (delta_t_de_III * e_t - gamma * (1 - lambd_t) * np.dot(e_t.T, w_t_de_III) * phi_tplus)
+        w_t_de_III = w_t_de_III + beta_t_de_III * (delta_t_de_III * e_t - np.dot(phi_t.T, w_t_de_III) * phi_t)
+        
+        error_store_de_IV[0, i] = (float(k)/(float(k)+1)) * error_store_de_IV[0, i] + (1/(float(k)+1)) * np.square(np.linalg.norm(theta_t_de_IV - theta_star))
+        delta_t_de_IV = r_t + gamma * np.dot(phi_tplus.T, theta_t_de_IV) - np.dot(phi_t.T, theta_t_de_IV)
+        theta_t_de_IV = theta_t_de_IV + alpha_t_de_IV * (delta_t_de_IV * e_t - gamma * (1 - lambd_t) * np.dot(e_t.T, w_t_de_IV) * phi_tplus)
+        w_t_de_IV = w_t_de_IV + beta_t_de_IV * (delta_t_de_IV * e_t - np.dot(phi_t.T, w_t_de_IV) * phi_t)
+        
+        error_store_de_V[0, i] = (float(k)/(float(k)+1)) * error_store_de_V[0, i] + (1/(float(k)+1)) * np.square(np.linalg.norm(theta_t_de_V - theta_star))
+        delta_t_de_V = r_t + gamma * np.dot(phi_tplus.T, theta_t_de_V) - np.dot(phi_t.T, theta_t_de_V)
+        theta_t_de_V = theta_t_de_V + alpha_t_de_V * (delta_t_de_V * e_t - gamma * (1 - lambd_t) * np.dot(e_t.T, w_t_de_V) * phi_tplus)
+        w_t_de_V = w_t_de_V + beta_t_de_V * (delta_t_de_V * e_t - np.dot(phi_t.T, w_t_de_V) * phi_t)
+        
+        error_store_de_VI[0, i] = (float(k)/(float(k)+1)) * error_store_de_VI[0, i] + (1/(float(k)+1)) * np.square(np.linalg.norm(theta_t_de_VI - theta_star))
+        delta_t_de_VI = r_t + gamma * np.dot(phi_tplus.T, theta_t_de_VI) - np.dot(phi_t.T, theta_t_de_VI)
+        theta_t_de_VI = theta_t_de_VI + alpha_t_de_VI * (delta_t_de_VI * e_t - gamma * (1 - lambd_t) * np.dot(e_t.T, w_t_de_VI) * phi_tplus)
+        w_t_de_VI = w_t_de_VI + beta_t_de_VI * (delta_t_de_VI * e_t - np.dot(phi_t.T, w_t_de_VI) * phi_t)
+        
+        error_store_de_VII[0, i] = (float(k)/(float(k)+1)) * error_store_de_VII[0, i] + (1/(float(k)+1)) * np.square(np.linalg.norm(theta_t_de_VII - theta_star))
+        delta_t_de_VII = r_t + gamma * np.dot(phi_tplus.T, theta_t_de_VII) - np.dot(phi_t.T, theta_t_de_VII)
+        theta_t_de_VII = theta_t_de_VII + alpha_t_de_VII * (delta_t_de_VII * e_t - gamma * (1 - lambd_t) * np.dot(e_t.T, w_t_de_VII) * phi_tplus)
+        w_t_de_VII = w_t_de_VII + beta_t_de_VII * (delta_t_de_VII * e_t - np.dot(phi_t.T, w_t_de_VII) * phi_t)
+        
+        error_store_de_VIII[0, i] = (float(k)/(float(k)+1)) * error_store_de_VIII[0, i] + (1/(float(k)+1)) * np.square(np.linalg.norm(theta_t_de_VIII - theta_star))
+        delta_t_de_VIII = r_t + gamma * np.dot(phi_tplus.T, theta_t_de_VIII) - np.dot(phi_t.T, theta_t_de_VIII)
+        theta_t_de_VIII = theta_t_de_VIII + alpha_t_de_VIII * (delta_t_de_VIII * e_t - gamma * (1 - lambd_t) * np.dot(e_t.T, w_t_de_VIII) * phi_tplus)
+        w_t_de_VIII = w_t_de_VIII + beta_t_de_VIII * (delta_t_de_VIII * e_t - np.dot(phi_t.T, w_t_de_VIII) * phi_t)
+        
+        error_store_de_IX[0, i] = (float(k)/(float(k)+1)) * error_store_de_IX[0, i] + (1/(float(k)+1)) * np.square(np.linalg.norm(theta_t_de_IX - theta_star))
+        delta_t_de_IX = r_t + gamma * np.dot(phi_tplus.T, theta_t_de_IX) - np.dot(phi_t.T, theta_t_de_IX)
+        theta_t_de_IX = theta_t_de_IX + alpha_t_de_IX * (delta_t_de_IX * e_t - gamma * (1 - lambd_t) * np.dot(e_t.T, w_t_de_IX) * phi_tplus)
+        w_t_de_IX = w_t_de_IX + beta_t_de_IX * (delta_t_de_IX * e_t - np.dot(phi_t.T, w_t_de_IX) * phi_t)
+        
+        error_store_de_X[0, i] = (float(k)/(float(k)+1)) * error_store_de_X[0, i] + (1/(float(k)+1)) * np.square(np.linalg.norm(theta_t_de_X - theta_star))
+        delta_t_de_X = r_t + gamma * np.dot(phi_tplus.T, theta_t_de_X) - np.dot(phi_t.T, theta_t_de_X)
+        theta_t_de_X = theta_t_de_X + alpha_t_de_X * (delta_t_de_X * e_t - gamma * (1 - lambd_t) * np.dot(e_t.T, w_t_de_X) * phi_tplus)
+        w_t_de_X = w_t_de_X + beta_t_de_X * (delta_t_de_X * e_t - np.dot(phi_t.T, w_t_de_X) * phi_t)
+        
+        error_store_de_XI[0, i] = (float(k)/(float(k)+1)) * error_store_de_XI[0, i] + (1/(float(k)+1)) * np.square(np.linalg.norm(theta_t_de_XI - theta_star))
+        delta_t_de_XI = r_t + gamma * np.dot(phi_tplus.T, theta_t_de_XI) - np.dot(phi_t.T, theta_t_de_XI)
+        theta_t_de_XI = theta_t_de_XI + alpha_t_de_XI * (delta_t_de_XI * e_t - gamma * (1 - lambd_t) * np.dot(e_t.T, w_t_de_XI) * phi_tplus)
+        w_t_de_XI = w_t_de_XI + beta_t_de_XI * (delta_t_de_XI * e_t - np.dot(phi_t.T, w_t_de_XI) * phi_t)
+        
+        error_store_de_XII[0, i] = (float(k)/(float(k)+1)) * error_store_de_XII[0, i] + (1/(float(k)+1)) * np.square(np.linalg.norm(theta_t_de_XII - theta_star))
+        delta_t_de_XII = r_t + gamma * np.dot(phi_tplus.T, theta_t_de_XII) - np.dot(phi_t.T, theta_t_de_XII)
+        theta_t_de_XII = theta_t_de_XII + alpha_t_de_XII * (delta_t_de_XII * e_t - gamma * (1 - lambd_t) * np.dot(e_t.T, w_t_de_XII) * phi_tplus)
+        w_t_de_XII = w_t_de_XII + beta_t_de_XII * (delta_t_de_XII * e_t - np.dot(phi_t.T, w_t_de_XII) * phi_t)
+
+
+t = np.arange(0, n_step, 1)
+#plt.figure(1)
+#plt.plot(t, np.squeeze(error_store_de_I), 
+#         t, np.squeeze(error_store_de_II), 
+#         t, np.squeeze(error_store_de_III), 
+#         t, np.squeeze(error_store_de_IV),
+#         t, np.squeeze(error_store_de_V), 
+#         t, np.squeeze(error_store_de_VI))
+#
+#plt.figure(2)
+#plt.plot(t[(n_step - 100000) : (n_step - 1)], np.squeeze(error_store_de_I)[(n_step - 100000) : (n_step - 1)], 
+#         t[(n_step - 100000) : (n_step - 1)], np.squeeze(error_store_de_II)[(n_step - 100000) : (n_step - 1)], 
+#         t[(n_step - 100000) : (n_step - 1)], np.squeeze(error_store_de_III)[(n_step - 100000) : (n_step - 1)], 
+#         t[(n_step - 100000) : (n_step - 1)], np.squeeze(error_store_de_IV)[(n_step - 100000) : (n_step - 1)],
+#         t[(n_step - 100000) : (n_step - 1)], np.squeeze(error_store_de_V)[(n_step - 100000) : (n_step - 1)], 
+#         t[(n_step - 100000) : (n_step - 1)], np.squeeze(error_store_de_VI)[(n_step - 100000) : (n_step - 1)])
+
+np.savetxt('error_store_de_Ic.txt', error_store_de_I)
+np.savetxt('error_store_de_IIc.txt', error_store_de_II)
+np.savetxt('error_store_de_IIIc.txt', error_store_de_III)
+np.savetxt('error_store_de_IVc.txt', error_store_de_IV)
+np.savetxt('error_store_de_Vc.txt', error_store_de_V)
+np.savetxt('error_store_de_VIc.txt', error_store_de_VI)
+np.savetxt('error_store_de_VIIc.txt', error_store_de_VII)
+np.savetxt('error_store_de_VIIIc.txt', error_store_de_VIII)
+np.savetxt('error_store_de_IXc.txt', error_store_de_IX)
+np.savetxt('error_store_de_Xc.txt', error_store_de_X)
+np.savetxt('error_store_de_XIc.txt', error_store_de_XI)
+np.savetxt('error_store_de_XIIc.txt', error_store_de_XII)
